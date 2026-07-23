@@ -30,3 +30,12 @@ class User(Base):
 
     is_active = Column(Boolean,
     nullable=False, default=True)
+
+class Category(Base):
+    __tablename__ = "categories"
+
+    id = Column(Integer,
+    primary_key=True)
+    
+    name = Column(String(20),
+    nullable=False, unique=True)
