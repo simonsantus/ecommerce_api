@@ -27,9 +27,6 @@ class User(Base):
     created_at = Column(DateTime,
     default=datetime.now, nullable=False)
 
-    role = Column(String(20),
-    nullable=False, default="user")
-
     is_active = Column(Boolean,
     nullable=False, default=True)
 
@@ -38,6 +35,9 @@ class User(Base):
 
     orders = relationship("Order",
     back_populates="user")
+
+    is_admin = Column(Boolean,
+    default=False)
 
 class Category(Base):
     __tablename__ = "categories"

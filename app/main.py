@@ -1,28 +1,130 @@
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+
+from passlib.context import CryptContext
+
+from jose import jwt
+from datetime import datetime, timedelta, timezone
 
 from app import models
 from app.database import engine, Base, get_db
 
 from app.schemas import (
-    CategoryCreate, 
-    CategoryResponse, 
-    CategoryUpdate, 
-    ProductCreate, 
-    ProductResponse, 
-    ProductUpdate
+    CategoryCreate, CategoryResponse, CategoryUpdate, 
+    ProductCreate, ProductResponse, ProductUpdate,
+    UserCreate, UserResponse, UserLogin
 )
 
 app = FastAPI()
+
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto"
+)
+
+SECRET_KEY = "my-super-secret-key"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(user_id: int):
+    expire = datetime.now(timezone.utc) + timedelta(
+
+        minutes = ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+
+    payload = {
+        "sub": str(user_id),
+        "exp": expire
+    }
+
+    token = jwt.encode(
+        payload,
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+    return token
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+    ):
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM]
+        )
+
+        user_id = payload.get("sub")
+
+        if user_id is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authetication credentials"
+            )
+    
+    except Exception:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authetication credentials"
+        )
+
+    user = (
+        db.query(models.User)
+        .filter(models.User.id == int(user_id))
+        .first()
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found"
+            )
+    
+    return user
+
+def require_admin(
+    current_user: models.User = Depends(get_current_user)
+    ):
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin acccess required"
+            )
+
+    return current_user
+
+
+@app.get(
+    "/users/me",
+    response_model=UserResponse
+)
+def get_me(
+    current_user: models.User = Depends(get_current_user)
+    ):
+    return current_user
 
 Base.metadata.create_all(bind=engine)
 
 @app.post(
     "/categories",
-    response_model=CategoryResponse)
+    response_model=CategoryResponse,
+    status_code=201
+    )
 def create_category(
     category: CategoryCreate,
-    db: Session = Depends(get_db)):
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+    ):
     new_category = models.Category(
         name=category.name
     )
@@ -63,7 +165,9 @@ def get_category(
 def update_category(
     category_id: int,
     category_data: CategoryUpdate,
-    db: Session = Depends(get_db)):
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+    ):
     category = (db.query(models.Category)
     .filter(models.Category.id == category_id)
     .first())
@@ -81,7 +185,9 @@ def update_category(
     "/categories/{category_id}")
 def delete_category(
     category_id: int,
-    db: Session = Depends(get_db)):
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+    ):
     category = (db.query(models.Category)
     .filter(models.Category.id == category_id)
     .first())
@@ -95,11 +201,13 @@ def delete_category(
 
 @app.post(
     "/products",
-    response_model=ProductResponse
+    response_model=ProductResponse,
+    status_code=201
 )
 def create_product(
     product: ProductCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
     ):
     category = (
         db.query(models.Category)
@@ -157,7 +265,9 @@ def get_product(
 def update_product(
     product_id: int,
     product_data: ProductUpdate,
-    db: Session = Depends(get_db)):
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+    ):
     product = (db.query(models.Product)
     .filter(models.Product.id == product_id)
     .first())
@@ -180,14 +290,81 @@ def update_product(
     "/products/{product_id}")
 def delete_product(
     product_id: int,
-    db: Session = Depends(get_db)):
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+    ):
     product = (db.query(models.Product)
     .filter(models.Product.id == product_id)
     .first())
+
     if product is None:
         raise HTTPException(
             status_code=404,
             detail="Product not found")
+
     db.delete(product)
     db.commit()
+
     return {"message": "Product deleted successfully"}
+
+@app.post(
+    "/users",
+    response_model=UserResponse,
+    status_code=201
+)
+def create_user(
+    user: UserCreate,
+    db: Session = Depends(get_db)
+    ):
+    existing_user = (db.query(models.User)
+    .filter(models.User.email == user.email)
+    .first()
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
+        )
+
+    hashed_password = hash_password(user.password)
+
+    new_user = models.User(
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        hashed_password=hashed_password
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return new_user
+
+@app.post("/login")
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+    ):
+    user = (
+        db.query(models.User)
+        .filter(models.User.email == form_data.username)
+        .first()
+    )    
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password"
+        )
+
+    if not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password"
+        )
+    access_token = create_access_token(user.id)
+
+    return {"access_token": access_token, "token_type": "bearer"
+    }
