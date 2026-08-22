@@ -12,13 +12,16 @@ A backend REST API for an e-commerce application built with FastAPI and SQLAlche
 - Category CRUD operations
 - Database session management
 - Input validation and error handling
+- User registration and login
+- Password hashing with bcrypt
+- JWT authentication
+- OAuth2password flow
+- Current user endpoint
+- Admin authorization
+- Protected product/category create, update and delete endpoints
 
 ## Planned Features
 
-- User registration and login
-- Password hashing
-- JWT authentication
-- Product CRUD
 - Shopping cart operations
 - Order creation
 - Pytest
@@ -32,6 +35,9 @@ A backend REST API for an e-commerce application built with FastAPI and SQLAlche
 - Pydantic
 - SQLite
 - Uvicorn
+- Passlib / bcrypt
+- python-jose
+- OAuth2 / JWT
 
 ## Run the project
 
