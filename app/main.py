@@ -14,7 +14,8 @@ from app.schemas import (
     CategoryCreate, CategoryResponse, CategoryUpdate, 
     ProductCreate, ProductResponse, ProductUpdate,
     UserCreate, UserResponse, UserLogin,
-    CartItemCreate, CartItemResponse, CartResponse, CartItemUpdate
+    CartItemCreate, CartItemResponse, CartResponse, CartItemUpdate,
+    OrderCreate, OrderResponse, OrderUpdate, OrderStatus
 )
 
 app = FastAPI()
@@ -272,13 +273,16 @@ def get_products(db: Session = Depends(get_db)):
 def get_product(
     product_id: int,
     db: Session = Depends(get_db)):
+
     product = (db.query(models.Product)
     .filter(models.Product.id == product_id)
     .first())
+
     if product is None:
         raise HTTPException(
             status_code=404,
             detail="Product not found")
+
     return product
 
 @app.patch(
@@ -495,6 +499,7 @@ def update_cart_item(
             models.CartItem.cart_id == cart.id)
             .first()
             )
+
     if cart_item is None:
         raise HTTPException(
             status_code=404,
@@ -551,3 +556,247 @@ def delete_cart_item(
 
     db.delete(cart_item)
     db.commit()
+
+@app.post(
+    "/orders",
+    response_model=OrderResponse,
+    status_code=201
+    )
+def create_order(
+    order_data: OrderCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+    
+    cart = (
+        db.query(models.Cart)
+        .filter(models.Cart.user_id == current_user.id)
+        .first()
+        )
+
+    if cart is None or not cart.cart_items:
+        raise HTTPException(
+            status_code=400,
+            detail="Cart is empty"
+            )
+
+    for cart_item in cart.cart_items:
+        if cart_item.quantity >cart_item.product.stock:
+            raise HTTPException(
+                status_code=400,
+                detail="Not enough stock for product"
+            )
+
+    new_order = models.Order(
+        user_id=current_user.id,
+        recipient_first_name=order_data.recipient_first_name,
+        recipient_last_name=order_data.recipient_last_name,
+        recipient_phone=order_data.recipient_phone,
+        recipient_email=order_data.recipient_email,
+        street=order_data.street,
+        city=order_data.city,
+        postal_code=order_data.postal_code,
+        country=order_data.country,
+        payment_method=order_data.payment_method,
+        delivery_method=order_data.delivery_method,
+        total_price=0
+        )
+
+    db.add(new_order)
+    db.flush()
+
+    total_price = 0
+    for cart_item in cart.cart_items:
+        order_item = models.OrderItem(
+            order_id=new_order.id,
+            product_id=cart_item.product_id,
+            quantity=cart_item.quantity,
+            unit_price=cart_item.product.price
+            )
+    
+        db.add(order_item)
+        cart_item.product.stock -= cart_item.quantity
+        total_price += cart_item.product.price * cart_item.quantity
+    
+    new_order.total_price = total_price
+
+    for cart_item in cart.cart_items:
+        db.delete(cart_item)
+    
+    db.commit()
+    db.refresh(new_order)
+
+    return new_order
+
+@app.get(
+    "/orders",
+    response_model=list[OrderResponse]
+    )
+def get_orders(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+
+    orders = (
+            db.query(models.Order)
+            .filter(models.Order.user_id == current_user.id)
+            .all()
+            )
+
+    return orders
+
+@app.get(
+    "/orders/{order_id}",
+    response_model=OrderResponse
+    )
+def get_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+
+    order = (
+            db.query(models.Order)
+            .filter(models.Order.id == order_id)
+            .first()
+            )
+
+    if order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+            )
+
+    if order.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to access this order"
+            )
+    return order
+
+@app.patch(
+    "/orders/{order_id}",
+    response_model=OrderResponse
+)
+def update_order(
+    order_id: int,
+    order_data: OrderUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+
+    order = (
+        db.query(models.Order)
+            .filter(models.Order.id == order_id)
+            .first()
+                )
+
+    if order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+            )
+
+    if order.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed"
+            )
+
+    if order.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail="Order can no longer be modified"
+            )
+
+    update_data = order_data.model_dump(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        setattr(order, field, value)
+
+    db.commit()
+    db.refresh(order)
+
+    return order
+    
+@app.patch(
+    "/orders/{order_id}/cancel",
+    response_model=OrderResponse
+    )
+def cancel_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+
+    order = (
+        db.query(models.Order)
+            .filter(models.Order.id == order_id)
+            .first()
+                )
+
+    if order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+            )
+
+    if order.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed"
+            )
+
+    if order.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail="Order can no longer be modified"
+            )
+
+    for order_item in order.order_items:
+        order_item.product.stock += order_item.quantity
+
+    order.status = "cancelled"
+
+    db.commit()
+    db.refresh(order)
+
+    return order
+
+@app.patch(
+    "/admin/orders/{order_id}/status",
+    response_model=OrderResponse
+    )
+def update_order_status(
+    order_id: int,
+    status_data: OrderStatus,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+    ):        
+
+    order = (
+        db.query(models.Order)
+            .filter(models.Order.id == order_id)
+            .first()
+                )
+
+    if order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not exists"
+        )
+
+    allowed_status = ["pending", "shipped", "delivered", "cancelled"]
+
+    if status_data.status not in allowed_status:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid order status"
+            )
+
+    order.status = status_data.status
+
+    db.commit()
+    db.refresh(order)
+
+    return order

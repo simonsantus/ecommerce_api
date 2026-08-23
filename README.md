@@ -19,10 +19,10 @@ A backend REST API for an e-commerce application built with FastAPI and SQLAlche
 - Current user endpoint
 - Admin authorization
 - Protected product/category create, update and delete endpoints
+- Shopping cart operations
 
 ## Planned Features
 
-- Shopping cart operations
 - Order creation
 - Pytest
 - Docker

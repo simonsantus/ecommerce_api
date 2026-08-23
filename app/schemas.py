@@ -130,3 +130,6 @@ class OrderUpdate(BaseModel):
     country: Optional[str] = None
     payment_method: Optional[str] = None
     delivery_method: Optional[str] = None
+
+class OrderStatus(BaseModel):
+    status: str
