@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from typing import Optional
 
@@ -25,7 +25,7 @@ class UserUpdate(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
-    
+
 class CategoryCreate(BaseModel):
     name: str
 
@@ -68,7 +68,7 @@ class ProductUpdate(BaseModel):
 
 class CartItemCreate(BaseModel):
     product_id: int
-    quantity: int
+    quantity: int = Field(gt=0)
 
 class CartItemResponse(BaseModel):
     id: int
@@ -81,7 +81,7 @@ class CartResponse(BaseModel):
     cart_items: list[CartItemResponse]
 
 class CartItemUpdate(BaseModel):
-    quantity: int
+    quantity: int = Field(gt=0)
 
 class OrderCreate(BaseModel):
     recipient_first_name: str

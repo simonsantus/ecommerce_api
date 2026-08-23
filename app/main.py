@@ -13,7 +13,8 @@ from app.database import engine, Base, get_db
 from app.schemas import (
     CategoryCreate, CategoryResponse, CategoryUpdate, 
     ProductCreate, ProductResponse, ProductUpdate,
-    UserCreate, UserResponse, UserLogin
+    UserCreate, UserResponse, UserLogin,
+    CartItemCreate, CartItemResponse, CartResponse, CartItemUpdate
 )
 
 app = FastAPI()
@@ -102,6 +103,27 @@ def require_admin(
             )
 
     return current_user
+
+def get_or_create_cart(
+    current_user: models.User,
+    db: Session
+    ):
+    cart = (
+        db.query(models.Cart)
+        .filter(models.Cart.user_id == current_user.id)
+        .first()
+        )
+    
+    if cart is None:
+        cart = models.Cart(
+            user_id=current_user.id
+        )
+
+        db.add(cart)
+        db.commit()
+        db.refresh(cart)
+    
+    return cart
 
 
 @app.get(
@@ -368,3 +390,164 @@ def login(
 
     return {"access_token": access_token, "token_type": "bearer"
     }
+
+@app.get(
+    "/cart",
+    response_model=CartResponse
+    )
+def get_cart(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+    cart = get_or_create_cart(current_user, db)
+
+    return cart
+
+@app.post(
+    "/cart/items",
+    response_model=CartItemResponse,
+    status_code=201
+    )
+def add_cart_item(
+    item: CartItemCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+    product = (
+        db.query(models.Product)
+        .filter(models.Product.id == item.product_id)
+        .first()
+        )
+
+    if product is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    if item.quantity > product.stock:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough stock"
+        )
+
+    cart = get_or_create_cart(
+        current_user,
+        db
+        )
+    
+    existing_item = (
+        db.query(models.CartItem)
+        .filter(
+            models.CartItem.cart_id == cart.id,
+            models.CartItem.product_id == item.product_id
+            )
+            .first()
+            )
+    
+    if existing_item:
+        new_quantity = existing_item.quantity + item.quantity
+        if new_quantity > product.stock:
+            raise HTTPException(
+                status_code=400,
+                detail="Not enough stock"
+                )
+        
+        existing_item.quantity = new_quantity
+
+        db.commit()
+        db.refresh(existing_item)
+
+        return existing_item
+
+    new_item = models.CartItem(
+        cart_id=cart.id,
+        product_id=item.product_id,
+        quantity=item.quantity
+        )
+    
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+    
+    return new_item
+
+@app.patch(
+    "/cart/items/{item_id}",
+    response_model=CartItemResponse
+)
+def update_cart_item(
+    item_id: int,
+    item_data: CartItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+
+    cart = get_or_create_cart(
+        current_user,
+        db
+        )
+    
+    cart_item = (db.query(
+        models.CartItem)
+        .filter(
+            models.CartItem.id == item_id,
+            models.CartItem.cart_id == cart.id)
+            .first()
+            )
+    if cart_item is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Cart item not found"
+            )
+    
+    product = (
+        db.query(models.Product)
+        .filter(models.Product.id == cart_item.product_id)
+        .first()
+        )
+    
+    if item_data.quantity > product.stock:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough stock"
+            )
+    
+    cart_item.quantity = item_data.quantity
+
+    db.commit()
+    db.refresh(cart_item)
+
+    return cart_item
+
+@app.delete(
+    "/cart/items/{item_id}",
+    status_code=204
+    )
+def delete_cart_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+    ):
+    cart = get_or_create_cart(
+        current_user,
+        db
+        )
+
+    cart_item = (
+        db.query(models.CartItem)
+        .filter(
+            models.CartItem.id == item_id,
+            models.CartItem.cart_id == cart.id
+            )
+        .first()
+        )
+    
+    if cart_item is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Cart item not found"
+            )
+
+    db.delete(cart_item)
+    db.commit()
